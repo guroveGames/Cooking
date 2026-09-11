@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🍳 Кулинарный бот</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #0f1115);
+    --card: var(--tg-theme-secondary-bg-color, #1a1d24);
+    --text: var(--tg-theme-text-color, #e8e8ea);
+    --muted: var(--tg-theme-hint-color, #8b8f98);
+    --accent: #ff7a45;
+    --accent-2: #ffb347;
+    --border: #2a2e37;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 16px;
+    padding-bottom: 40px;
+  }
+  .container { max-width: 700px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 20px; }
+  h1 {
+    font-size: 26px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; }
+
+  .cuisines {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .cuisine-btn {
+    background: var(--card);
+    border: 2px solid transparent;
+    border-radius: 14px;
+    padding: 18px 12px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    font-family: inherit;
+  }
+  .cuisine-btn:active { transform: scale(0.97); }
+  .cuisine-btn.active {
+    border-color: var(--accent);
+    background: linear-gradient(135deg, rgba(255,122,69,0.18), rgba(255,179,71,0.05));
+  }
+
+  .search-box {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .search-box input {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: var(--text);
+    font-size: 16px;
+    outline: none;
+    font-family: inherit;
+    min-width: 0;
+  }
+  .search-box input:focus { border-color: var(--accent); }
+  .search-box button {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border: none;
+    border-radius: 12px;
+    padding: 0 20px;
+    color: #1a1d24;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .search-box button:disabled { opacity: 0.4; }
+
+  .results { display: flex; flex-direction: column; gap: 10px; }
+  .recipe {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px 18px;
+    border-left: 4px solid var(--accent);
+  }
+  .recipe h3 { font-size: 17px; margin-bottom: 8px; color: var(--accent-2); }
+  .recipe .label {
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin: 12px 0 4px;
+  }
+  .recipe .content {
+    white-space: pre-wrap;
+    font-size: 14.5px;
+    line-height: 1.5;
+  }
+
+  .empty, .hint {
+    text-align: center;
+    color: var(--muted);
+    padding: 32px 16px;
+    font-size: 14px;
+  }
+  .status {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12.5px;
+    margin-bottom: 12px;
+    min-height: 16px;
+  }
+  .spinner {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--muted);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🍳 Кулинарный бот</h1>
+    <p class="subtitle">Рецепты четырёх кухонь</p>
+  </header>
+
+  <div class="cuisines" id="cuisines"></div>
+  <div class="status" id="status">Выбери кухню</div>
+
+  <div class="search-box">
+    <input type="text" id="query" placeholder="Название блюда…" disabled autocomplete="off">
+    <button id="searchBtn" disabled>Найти</button>
+  </div>
+
+  <div class="results" id="results"></div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const CUISINES = {
+  french:   { label: "🇫🇷 Французская", file: "recipes/french.json" },
+  jewish:   { label: "✡️ Еврейская",   file: "recipes/jewish.json" },
+  russian:  { label: "🇷🇺 Русская",     file: "recipes/russian.json" },
+  georgian: { label: "🇬🇪 Грузинская",  file: "recipes/georgian.json" },
+};
+
+let currentCuisine = null;
+let currentRecipes = [];
+const cache = {};
+
+const cuisinesEl = document.getElementById("cuisines");
+const statusEl   = document.getElementById("status");
+const queryEl    = document.getElementById("query");
+const searchBtn  = document.getElementById("searchBtn");
+const resultsEl  = document.getElementById("results");
+
+Object.entries(CUISINES).forEach(([key, { label }]) => {
+  const btn = document.createElement("button");
+  btn.className = "cuisine-btn";
+  btn.textContent = label;
+  btn.dataset.key = key;
+  btn.onclick = () => selectCuisine(key, btn);
+  cuisinesEl.appendChild(btn);
+});
+
+async function selectCuisine(key, btn) {
+  currentCuisine = key;
+  document.querySelectorAll(".cuisine-btn").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+
+  queryEl.disabled = false;
+  searchBtn.disabled = false;
+  queryEl.value = "";
+  resultsEl.innerHTML = "";
+  statusEl.innerHTML = `<span class="spinner"></span>Загружаю рецепты…`;
+
+  try {
+    if (!cache[key]) {
+      const url = CUISINES[key].file + "?v=" + Date.now();
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      cache[key] = await res.json();
+    }
+    currentRecipes = cache[key];
+    statusEl.textContent = `В базе ${currentRecipes.length} рецептов. Введи название блюда.`;
+  } catch (e) {
+    statusEl.textContent = "⚠️ Не удалось загрузить базу. Проверь recipes/" + key + ".json";
+    currentRecipes = [];
+  }
+}
+
+function search() {
+  const q = queryEl.value.trim().toLowerCase();
+  resultsEl.innerHTML = "";
+  if (!q) return;
+  if (currentRecipes.length === 0) {
+    resultsEl.innerHTML = `<div class="empty">База пустая или не загрузилась.</div>`;
+    return;
+  }
+
+  const found = currentRecipes.filter(r =>
+    r.name.toLowerCase().includes(q) ||
+    (r.keywords && r.keywords.toLowerCase().includes(q))
+  ).slice(0, 20);
+
+  if (found.length === 0) {
+    resultsEl.innerHTML = `<div class="empty">😔 Ничего не нашлось по запросу «${escapeHtml(queryEl.value)}»</div>`;
+    statusEl.textContent = "";
+    return;
+  }
+
+  found.forEach(r => {
+    const div = document.createElement("div");
+    div.className = "recipe";
+    let html = `<h3>🍽 ${escapeHtml(r.name)}</h3>`;
+    if (r.ingredients) {
+      html += `<div class="label">Ингредиенты</div>
+               <div class="content">${escapeHtml(r.ingredients)}</div>`;
+    }
+    if (r.steps) {
+      html += `<div class="label">Приготовление</div>
+               <div class="content">${escapeHtml(r.steps)}</div>`;
+    }
+    div.innerHTML = html;
+    resultsEl.appendChild(div);
+  });
+
+  statusEl.textContent = `Найдено: ${found.length}`;
+  if (tg) tg.HapticFeedback?.impactOccurred("light");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+searchBtn.onclick = search;
+queryEl.addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+</script>
+</body>
+</html>
